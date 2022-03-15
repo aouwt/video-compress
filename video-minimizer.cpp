@@ -8,6 +8,8 @@
 
 
 #define FPS 15
+#define THRESH 512
+#define CONT 2
 
 size_t VidW, VidH, VidFrames;
 
@@ -93,12 +95,21 @@ namespace compressor {
 	void to_monochrome (cv::Mat *frame, Frame **out) {
 		uint8_t *pdat = (uint8_t*) frame -> data;
 		
-		for (size_t y = 0; y != VidH; y ++) {
-			for (size_t x = 0; x != VidW; x ++) { // TODO: dither
-			
-				out [x] [y] = (pdat [((x * VidH) + y) * 3] > 127);
+		#define px(x,y) pdat [(((x) * VidH) + (y)) * 3]
+		for (size_t x = 0; x != VidW; x ++) {
+			int err = 0;
+			for (size_t y = 0; y != VidH; y ++) { // TODO: dither
+				err -= px (x, y);
+				if (err < THRESH) {
+					out [x] [y] = true;
+					err += THRESH * CONT;
+				} else {
+					out [x] [y] = false;
+					//err += THRESH;
+				}
 			}
-		}		
+		}	
+		#undef px	
 	}
 
 
@@ -263,7 +274,7 @@ namespace decompressor {
 		
 		_nextbit_pos = Video = inflate (dat, Arg.In.sz);
 		
-		
+		//cleanup
 		munmap (dat, actualsz);
 		fclose (Arg.In.f);
 	}
