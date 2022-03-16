@@ -7,7 +7,7 @@
 #include <SDL2/SDL.h>
 
 
-#define FPS 15
+#define FPS 5
 #define THRESH 64
 #define CONT 4
 
