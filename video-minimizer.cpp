@@ -8,8 +8,10 @@
 
 
 #define FPS 15
-#define THRESH 512
-#define CONT 2
+#define THRESH 64
+#define CONT 4
+
+#define RESIZE
 
 size_t VidW, VidH, VidFrames;
 
@@ -96,8 +98,8 @@ namespace compressor {
 		uint8_t *pdat = (uint8_t*) frame -> data;
 		
 		#define px(x,y) pdat [(((x) * VidH) + (y)) * 3]
+		int err = 0;
 		for (size_t x = 0; x != VidW; x ++) {
-			int err = 0;
 			for (size_t y = 0; y != VidH; y ++) { // TODO: dither
 				err -= px (x, y);
 				if (err < THRESH) {
@@ -206,8 +208,10 @@ namespace compressor {
 
 namespace decompressor {
 	SDL_Window *Window;
-	SDL_Surface *WindowSurface;
-	uint32_t *WindowBuffer;
+	SDL_Surface *WindowSurface, *DrawSurface;
+	SDL_Rect Letterbox;
+	SDL_Event Event;
+	uint32_t *DrawBuffer;
 	uint8_t *Video;
 	uint8_t *_nextbit_pos;
 	
@@ -218,11 +222,21 @@ namespace decompressor {
 			Arg.In.path,
 			SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
 			VidW, VidH,
-			0
+			SDL_WINDOW_RESIZABLE
 		);
 		
 		WindowSurface = SDL_GetWindowSurface (Window);
-		WindowBuffer = (uint32_t*) WindowSurface -> pixels;
+		Letterbox = { 0,0, int (VidW), int (VidH) };
+		
+		DrawSurface = SDL_CreateRGBSurface (0, VidW,VidH, 32, 0,0,0,0);
+		/*{	const SDL_Color pal [2] = {
+				{ 0, 0, 0, 255 },
+				{ 255, 255, 255, 255}
+			};
+			
+			SDL_SetPaletteColors (DrawSurface -> format -> palette, pal, 0, 2);
+		}*/
+		DrawBuffer = (uint32_t*) DrawSurface -> pixels;
 	}
 	
 	
@@ -296,7 +310,7 @@ namespace decompressor {
 	void displayframe (void) {
 		for (unsigned int y = 0; y != VidH; y ++)
 			for (unsigned int x = 0; x != VidW; x ++)
-				WindowBuffer [(y * VidW) + x] = nextbit () ? 0xFFFFFFFF : 0xFF000000;
+				DrawBuffer [(y * VidW) + x] = nextbit () ? 0xFFFFFFFF : 0xFF000000;
 	}
 	
 	
@@ -309,20 +323,55 @@ namespace decompressor {
 		last = target;
 	}
 	
+	void events (void) {
+		if (Event.type == SDL_WINDOWEVENT) {
+			switch (Event.window.event) {
+				case SDL_WINDOWEVENT_RESIZED:
+					Letterbox = { 0,0, Event.window.data1, Event.window.data2 };
+					
+					SDL_SetWindowSize (Window, Event.window.data1, Event.window.data2);
+					SDL_UpdateWindowSurface (Window);
+					
+					WindowSurface = SDL_GetWindowSurface (Window);
+					break;
+			}
+		} else
+		if (Event.type == SDL_QUIT) {
+			exit (0);
+		}
+	}
+	
 	
 	void decompress (void) {
 		loadfile ();
 		setupwindow ();
 		
 		for (size_t i = 0; i != VidFrames; i ++) {
+			while (SDL_PollEvent (&Event)) events ();
 			displayframe ();
+			
+			SDL_BlitScaled (DrawSurface, NULL, WindowSurface, &Letterbox);
 			SDL_UpdateWindowSurface (Window);
+			
 			waitframe ();
 		}
 	}
 }
 
 
+
+void displayhelp (const char* argv1) {
+	printf ("Usage: %s [-c LEVEL] [-i] INFILE [[-o] OUTFILE]\n", argv1);
+	printf ("       %s [-d] [-i] FILE\n", argv1);
+	printf ("\n");
+	printf ("Standard options\n");
+	printf (" -i IF  Select the file to be played/compressed\n");
+	printf ("Options for compression\n");
+	printf (" -c LV  Compress INFILE at level LV (integer 0-12)\n");
+	printf (" -o OF  Select the outputted file from the compression\n");
+	printf ("Options for playback\n");
+	printf (" -d     Enables playback mode\n");
+}
 
 
 	
@@ -385,7 +434,7 @@ int main (int argc, char **argv) {
 	
 	
 	if (Arg.DisplayHelp) {
-		//displayhelp ();
+		displayhelp (argv [0]);
 		exit (0);
 	} else
 	if (Arg.Decompress) {
