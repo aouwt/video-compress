@@ -36,7 +36,7 @@ struct {
 
 namespace compressor {
 	cv::VideoCapture *video = NULL;
-	typedef bool Frame;
+	typedef /*bool*/ uint8_t Frame;
 	
 	void conv_frame (cv::Mat *frame) {
 		float alpha = 1, beta = 0;
@@ -100,7 +100,7 @@ namespace compressor {
 		#define px(x,y) pdat [(((x) * VidH) + (y)) * 3]
 		int err = 0;
 		for (size_t x = 0; x != VidW; x ++) {
-			for (size_t y = 0; y != VidH; y ++) { // TODO: dither
+			for (size_t y = 0; y != VidH; y ++) {
 				err -= px (x, y);
 				if (err < THRESH) {
 					out [x] [y] = true;
@@ -113,13 +113,33 @@ namespace compressor {
 		}	
 		#undef px	
 	}
+	
+	void to_grey (cv::Mat *frame, Frame **out) {
+		uint8_t *pdat = (uint8_t*) frame -> data;
+		
+		#define px(x,y) pdat [(((x) * VidH) + (y)) * 3]
+		int err = 0;
+		for (size_t x = 0; x != VidW; x ++) {
+			for (size_t y = 0; y != VidH; y ++) {
+				err += px (x, y);
+				if (err >= 255/3) {
+					out [x] [y] = err / (255/3);
+					err -= out [x] [y] * (255/3);
+				} else
+					out [x] [y] = 0;
+				//err -= (out [x] [y] = err / (256 / 4));// * CONT;
+				//out [x] [y] = px (x, y) / (256 / 16);
+			}
+		}	
+		#undef px	
+	}
 
 
 	void savevid (Frame ***vid) {
 		
 		struct libdeflate_compressor *compressor = libdeflate_alloc_compressor (Arg.CLevel);
 		
-		size_t uncompressedvideo_sz = ((VidFrames * VidW * VidH) / 8) + 10;
+		size_t uncompressedvideo_sz = ((VidFrames * VidW * VidH) / /*8*/ 4) + 10;
 		size_t uncompressedvideo_left = uncompressedvideo_sz;
 		uint8_t *uncompressedvideo = new uint8_t [uncompressedvideo_sz];
 		
@@ -129,10 +149,10 @@ namespace compressor {
 			for (size_t x = 0; x != VidW; x ++) {
 				for (size_t y = 0; y != VidH; y ++) {
 				
-					*byte = (*byte << 1) | vid [f] [x] [y];
+					*byte = (*byte << 2) | vid [f] [x] [y];
 					
 					
-					if (++ bit == 8) {
+					if (++ bit == 4) {
 						byte ++;
 						*byte = 0;
 						if (-- uncompressedvideo_left == 0)
@@ -189,7 +209,7 @@ namespace compressor {
 				conv_frame (&frame);
 				
 				outvid [frameno] = newframe ();
-				to_monochrome (&frame, outvid [frameno]);
+				to_grey (&frame, outvid [frameno]);
 			}
 		}
 		
@@ -252,7 +272,7 @@ namespace decompressor {
 			mem = realloc (mem, (allocsz *= 1.25));
 		
 		mem = realloc (mem, outsz + 1);
-		VidFrames = ((outsz * 8) / (VidW * VidH));
+		VidFrames = ((outsz * /*8*/ 4) / (VidW * VidH));
 		
 		libdeflate_free_decompressor (decompressor);
 		return (uint8_t*) mem;
@@ -305,12 +325,34 @@ namespace decompressor {
 		return byte & 0x80;
 	}
 	
+	short next2bits (void) {
+		static short bit = 0;
+		static uint8_t byte = 0;
+		
+		if (++ bit == 4) {
+			bit = 0;
+			byte = *_nextbit_pos ++;
+		} else
+			byte = byte << 2;
+		
+		return byte & 0b11000000;
+	}
 	
 	
 	void displayframe (void) {
-		for (unsigned int y = 0; y != VidH; y ++)
-			for (unsigned int x = 0; x != VidW; x ++)
-				DrawBuffer [(y * VidW) + x] = nextbit () ? 0xFFFFFFFF : 0xFF000000;
+		for (unsigned int y = 0; y != VidH; y ++) {
+			for (unsigned int x = 0; x != VidW; x ++) {
+				uint_least32_t val = next2bits ();
+				
+				DrawBuffer [(y * VidW) + x] =
+					0xFF000000 |
+					(val << 16) |
+					(val << 8) |
+					val
+				;
+				//DrawBuffer [(y * VidW) + x] = nextbit () ? 0xFFFFFFFF : 0xFF000000;
+			}
+		}
 	}
 	
 	

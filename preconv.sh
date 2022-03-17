@@ -1,5 +1,5 @@
-if [ "$RES" -e "" ]; then
-  RES=160x120
+if [ -z "$RES" ]; then
+  RES=80x60
 fi
 temp=$(mktemp --suffix=".mp4")
 ffmpeg -y -i "$1" -r 5 -s "$RES" -an "$temp"
