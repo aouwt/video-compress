@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <linux/fs.h>
 #ifdef WINDOW
 	#include <SDL2/SDL.h>
 #else
@@ -276,9 +278,16 @@ namespace decompressor {
 		
 			struct stat st;
 			fstat (Arg.In.fd, &st);
-	
-			actualsz = st.st_size;
-			Arg.In.sz = actualsz - ftell (Arg.In.f);
+			if (st.st_size > 0) { // does fstat return correct info?
+				actualsz = st.st_size;
+				Arg.In.sz = actualsz - ftell (Arg.In.f);
+				
+			} else { // if not, try ioctl
+				uint64_t sz;
+				ioctl (Arg.In.fd, BLKGETSIZE, &sz);
+				actualsz = sz;
+				Arg.In.sz = actualsz - ftell (Arg.In.f);
+			}
 		}
 		
 		// mmap
