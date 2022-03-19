@@ -1,17 +1,23 @@
+#define CONSOLE
+//#define WINDOW
+
 #include <opencv4/opencv2/opencv.hpp>
 #include <libdeflate.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
-#include <SDL2/SDL.h>
-
+#ifdef WINDOW
+	#include <SDL2/SDL.h>
+#else
+	#include <sys/time.h>
+	#include <unistd.h>
+#endif
 
 #define FPS 5
 #define THRESH 64
 #define CONT 4
 
-#define RESIZE
 
 size_t VidW, VidH, VidFrames;
 
@@ -227,38 +233,15 @@ namespace compressor {
 
 
 namespace decompressor {
-	SDL_Window *Window;
-	SDL_Surface *WindowSurface, *DrawSurface;
-	SDL_Rect Letterbox;
-	SDL_Event Event;
-	uint32_t *DrawBuffer;
+	#ifdef WINDOW
+		SDL_Window *Window;
+		SDL_Surface *WindowSurface, *DrawSurface;
+		SDL_Rect Letterbox;
+		SDL_Event Event;
+		uint32_t *DrawBuffer;
+	#endif
 	uint8_t *Video;
 	uint8_t *_nextbit_pos;
-	
-	void setupwindow (void) {
-		SDL_Init (SDL_INIT_VIDEO);
-		
-		Window = SDL_CreateWindow (
-			Arg.In.path,
-			SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-			VidW, VidH,
-			SDL_WINDOW_RESIZABLE
-		);
-		
-		WindowSurface = SDL_GetWindowSurface (Window);
-		Letterbox = { 0,0, int (VidW), int (VidH) };
-		
-		DrawSurface = SDL_CreateRGBSurface (0, VidW,VidH, 32, 0,0,0,0);
-		/*{	const SDL_Color pal [2] = {
-				{ 0, 0, 0, 255 },
-				{ 255, 255, 255, 255}
-			};
-			
-			SDL_SetPaletteColors (DrawSurface -> format -> palette, pal, 0, 2);
-		}*/
-		DrawBuffer = (uint32_t*) DrawSurface -> pixels;
-	}
-	
 	
 	
 	uint8_t *inflate (void *data, size_t len) {
@@ -335,67 +318,145 @@ namespace decompressor {
 		} else
 			byte = byte << 2;
 		
-		return byte & 0b11000000;
+		return (byte & 0b11000000) >> 6;
 	}
 	
 	
-	void displayframe (void) {
-		for (unsigned int y = 0; y != VidH; y ++) {
-			for (unsigned int x = 0; x != VidW; x ++) {
-				uint_least32_t val = next2bits ();
+	
+	#ifdef WINDOW
+		// SDL specific code here
+		
+		
+		void setupwindow (void) {
+			SDL_Init (SDL_INIT_VIDEO);
+			
+			Window = SDL_CreateWindow (
+				Arg.In.path,
+				SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+				VidW, VidH,
+				SDL_WINDOW_RESIZABLE
+			);
+			
+			WindowSurface = SDL_GetWindowSurface (Window);
+			Letterbox = { 0,0, int (VidW), int (VidH) };
+			
+			DrawSurface = SDL_CreateRGBSurface (0, VidW,VidH, 32, 0,0,0,0);
+			/*{	const SDL_Color pal [2] = {
+					{ 0, 0, 0, 255 },
+					{ 255, 255, 255, 255}
+				};
 				
-				DrawBuffer [(y * VidW) + x] =
-					0xFF000000 |
-					(val << 16) |
-					(val << 8) |
-					val
-				;
-				//DrawBuffer [(y * VidW) + x] = nextbit () ? 0xFFFFFFFF : 0xFF000000;
+				SDL_SetPaletteColors (DrawSurface -> format -> palette, pal, 0, 2);
+			}*/
+			DrawBuffer = (uint32_t*) DrawSurface -> pixels;
+		}
+	
+	
+		void displayframe (void) {
+			for (unsigned int y = 0; y != VidH; y ++) {
+				for (unsigned int x = 0; x != VidW; x ++) {
+					uint_least32_t val = next2bits () << 6;
+					
+					DrawBuffer [(y * VidW) + x] =
+						0xFF000000 |
+						(val << 16) |
+						(val << 8) |
+						val
+					;
+					//DrawBuffer [(y * VidW) + x] = nextbit () ? 0xFFFFFFFF : 0xFF000000;
+				}
 			}
 		}
-	}
-	
-	
-	void waitframe (void) {
-		static unsigned long last;
-		unsigned long
-			target = last + (1000 / FPS),
-			now = SDL_GetTicks ();
-		if (target > now) SDL_Delay (target - now);
-		last = target;
-	}
-	
-	void events (void) {
-		if (Event.type == SDL_WINDOWEVENT) {
-			switch (Event.window.event) {
-				case SDL_WINDOWEVENT_RESIZED:
-					Letterbox = { 0,0, Event.window.data1, Event.window.data2 };
-					
-					SDL_SetWindowSize (Window, Event.window.data1, Event.window.data2);
-					SDL_UpdateWindowSurface (Window);
-					
-					WindowSurface = SDL_GetWindowSurface (Window);
-					break;
-			}
-		} else
-		if (Event.type == SDL_QUIT) {
-			exit (0);
+		
+		
+		void waitframe (void) {
+			static unsigned long last;
+			unsigned long
+				target = last + (1000 / FPS),
+				now = SDL_GetTicks ();
+			if (target > now) SDL_Delay (target - now);
+			last = target;
 		}
-	}
+		
+		
+		
+		void events (void) {
+			if (Event.type == SDL_WINDOWEVENT) {
+				switch (Event.window.event) {
+					case SDL_WINDOWEVENT_RESIZED:
+						Letterbox = { 0,0, Event.window.data1, Event.window.data2 };
+						
+						SDL_SetWindowSize (Window, Event.window.data1, Event.window.data2);
+						SDL_UpdateWindowSurface (Window);
+						
+						WindowSurface = SDL_GetWindowSurface (Window);
+						break;
+				}
+			} else
+			if (Event.type == SDL_QUIT) {
+				exit (0);
+			}
+		}
+		
+		
+	#else
+		
+		void displayframe (void) {
+			const char* chars [] = { " ", ".", "=", "#" };
+			//const char* chars [] = { "\033[0m"
+			//const char *chars [] = { " ", "░", "▓", "█" };
+			
+			printf ("\033[H");
+			for (unsigned int y = 0; y != VidH; y ++) {
+				for (unsigned int x = 0; x != VidW; x ++) {
+					printf ("%s", chars [next2bits ()]);
+				}
+				putchar ('\n');
+			}
+			putchar ('\n');
+		}
+			
+		
+		
+		useconds_t millis (void) {
+			struct timeval tv;
+			gettimeofday (&tv, NULL);
+			return tv.tv_sec * 1000000 + tv.tv_usec;
+		}
+			
+		void waitframe (void) {
+			/*static useconds_t last;
+			useconds_t
+				target = last + (1000000 / FPS),
+				now = millis ();
+			if (target > now) usleep (target - now);*/
+			usleep (1000000 / FPS);
+		}
+	
+	
+	#endif
+	
 	
 	
 	void decompress (void) {
 		loadfile ();
-		setupwindow ();
+		#ifdef WINDOW
+			setupwindow ();
+		#endif
 		
 		for (size_t i = 0; i != VidFrames; i ++) {
-			while (SDL_PollEvent (&Event)) events ();
 			displayframe ();
-			
-			SDL_BlitScaled (DrawSurface, NULL, WindowSurface, &Letterbox);
-			SDL_UpdateWindowSurface (Window);
-			
 			waitframe ();
+			
+			#ifdef WINDOW
+				while (SDL_PollEvent (&Event)) events ();
+				
+				SDL_BlitScaled (DrawSurface, NULL, WindowSurface, &Letterbox);
+				SDL_UpdateWindowSurface (Window);
+			#endif
+			
+			//#ifdef CONSOLE
+			
 		}
 	}
 }
