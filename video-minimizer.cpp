@@ -5,15 +5,17 @@
 #include <libdeflate.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <linux/fs.h>
+#include <unistd.h>
 #ifdef WINDOW
 	#include <SDL2/SDL.h>
 #else
 	#include <sys/time.h>
-	#include <unistd.h>
 #endif
 
 #define FPS 5
@@ -25,7 +27,7 @@ size_t VidW, VidH, VidFrames;
 
 
 struct opf {
-	FILE* f = NULL;
+	//FILE* f = NULL;
 	int fd = 0;
 	char *path = NULL;
 	size_t sz = 0;
@@ -184,10 +186,13 @@ namespace compressor {
 		;
 		
 		{	uint16_t w = VidW, h = VidH;
-			fwrite (&w, sizeof (w), 1, Arg.Out.f);
-			fwrite (&h, sizeof (h), 1, Arg.Out.f);
+			uint32_t sz = compressedvideo_len;
+			
+			write (Arg.Out.fd, &w, sizeof (w));
+			write (Arg.Out.fd, &h, sizeof (h));
+			write (Arg.Out.fd, &sz, sizeof (sz));
 		}
-		fwrite (compressedvideo, sizeof (uint8_t), compressedvideo_len, Arg.Out.f);
+		write (Arg.Out.fd, compressedvideo, sizeof (uint8_t) * compressedvideo_len);
 		
 		delete [] uncompressedvideo; delete [] compressedvideo;
 		
@@ -223,9 +228,13 @@ namespace compressor {
 		
 		
 		fprintf (stderr, "Done\nCompressing and saving video...");
-		Arg.Out.f = fopen (Arg.Out.path, "w");
+		Arg.Out.fd = open (
+			Arg.Out.path,
+			O_WRONLY | O_CREAT | O_TRUNC | O_DIRECT,
+			S_IRUSR | S_IWUSR | S_IRGRP
+		);
 		savevid (outvid);
-		fclose (Arg.Out.f);
+		close (Arg.Out.fd);
 		fprintf (stderr, "Done\n");
 	}
 }
@@ -265,44 +274,49 @@ namespace decompressor {
 	
 	
 	void loadfile (void) {
-		Arg.In.f = fopen (Arg.In.path, "r");
+		size_t fsize;
+		//Arg.In.f = fopen (Arg.In.path, "r");
+		Arg.In.fd = open (Arg.In.path, O_RDONLY);
 		{	uint16_t w, h;
-			fread (&w, sizeof (w), 1, Arg.In.f);
-			fread (&h, sizeof (h), 1, Arg.In.f);
-			VidW = w; VidH = h;
+			uint32_t sz;
+			read (Arg.In.fd, &w, sizeof (w));
+			read (Arg.In.fd, &h, sizeof (h));
+			read (Arg.In.fd, &sz, sizeof (sz));
+			VidW = w; VidH = h; fsize = sz;
+			
+			Arg.In.sz = fsize + lseek (Arg.In.fd, 0, SEEK_CUR);
 		}
 		
+		//off_t pos = lseek (Arg.In.fd, 0, SEEK_CUR);
 		// get file size
-		size_t actualsz;
-		{	Arg.In.fd = fileno (Arg.In.f);
-		
-			struct stat st;
+		/*size_t actualsz;
+		{	struct stat st;
 			fstat (Arg.In.fd, &st);
+			
 			if (st.st_size > 0) { // does fstat return correct info?
 				actualsz = st.st_size;
-				Arg.In.sz = actualsz - ftell (Arg.In.f);
+				Arg.In.sz = actualsz - pos;
 				
 			} else { // if not, try ioctl
 				uint64_t sz;
 				ioctl (Arg.In.fd, BLKGETSIZE, &sz);
 				actualsz = sz;
-				Arg.In.sz = actualsz - ftell (Arg.In.f);
+				Arg.In.sz = actualsz - pos;
 			}
-		}
+		}*/
 		
 		// mmap
 		void *dat = mmap (
-				NULL, actualsz,
-				PROT_READ, MAP_PRIVATE,
-				Arg.In.fd, 0
-			) + ftell (Arg.In.f)
-		;
+			NULL, fsize,
+			PROT_READ, MAP_PRIVATE,
+			Arg.In.fd, 0
+		) + lseek (Arg.In.fd, 0, SEEK_CUR);
 		
 		_nextbit_pos = Video = inflate (dat, Arg.In.sz);
 		
 		//cleanup
-		munmap (dat, actualsz);
-		fclose (Arg.In.f);
+		munmap (dat, Arg.In.sz);
+		close (Arg.In.fd);
 	}
 	
 	bool nextbit (void) {
